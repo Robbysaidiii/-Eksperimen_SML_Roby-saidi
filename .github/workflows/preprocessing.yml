@@ -27,7 +27,7 @@ jobs:
 
     - name: ⚙️ Jalankan Script Preprocessing
       run: |
-        python preprocessing/automate_Nama-siswa.py
+        python preprocessing/automate_Roby_saidi.py
 
     - name: 📦 Upload Hasil Preprocessing sebagai Artifact
       uses: actions/upload-artifact@v4
