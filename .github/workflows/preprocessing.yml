@@ -30,7 +30,7 @@ jobs:
         python preprocessing/automate_Nama-siswa.py
 
     - name: 📦 Upload Hasil Preprocessing sebagai Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: preprocessed-dataset
         path: preprocessing/namadataset_preprocessing/data_preprocessed.csv
