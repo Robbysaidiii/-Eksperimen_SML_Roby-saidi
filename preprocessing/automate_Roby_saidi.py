@@ -6,7 +6,7 @@ from scipy.stats import zscore
 import os
 
 # --- 1. Load Data ---
-RAW_PATH = "/namadataset_raw/jobs_dataset.csv"
+RAW_PATH = "namadataset_raw/jobs_dataset.csv"
 df = pd.read_csv(RAW_PATH)
 
 # --- 2. Preprocessing Salary ---
