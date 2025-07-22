@@ -6,7 +6,7 @@ from scipy.stats import zscore
 import os
 
 # --- 1. Load Data ---
-RAW_PATH = "namadataset_raw/jobs_dataset.csv"
+RAW_PATH = "../namadataset_raw/jobs_dataset.csv"
 df = pd.read_csv(RAW_PATH)
 
 # --- 2. Preprocessing Salary ---
@@ -39,21 +39,28 @@ for col in ['salary_num', 'desc_len', 'posname_len']:
 
 # --- 6. Encoding ---
 categorical_cols = df.select_dtypes(include=['object', 'bool']).columns.tolist()
+
+# Handle NaNs in categorical columns before encoding
+df[categorical_cols] = df[categorical_cols].fillna("Missing")
+
 ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
 encoded = ohe.fit_transform(df[categorical_cols])
-encoded_df = pd.DataFrame(encoded, columns=ohe.get_feature_names_out(categorical_cols))
+encoded_df = pd.DataFrame(encoded, columns=ohe.get_feature_names_out(categorical_cols), index=df.index)
 
+# Gabungkan hasil encoding ke dataframe numerik
 df_encoded = pd.concat([df.drop(columns=categorical_cols), encoded_df], axis=1)
 
 # --- 7. Binning Example (Rating) ---
-df_encoded['rating_bin'] = pd.cut(df_encoded['rating'], bins=3, labels=["Low", "Medium", "High"])
+if 'rating' in df_encoded.columns:
+    df_encoded['rating_bin'] = pd.cut(df_encoded['rating'], bins=3, labels=["Low", "Medium", "High"])
 
 # --- 8. Save Output ---
 OUTPUT_DIR = "namadataset_preprocessing"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-df_encoded.to_csv(f"{OUTPUT_DIR}/data_preprocessed.csv", index=False)
+output_path = f"{OUTPUT_DIR}/data_preprocessed.csv"
+df_encoded.to_csv(output_path, index=False)
 
-print("✅ Preprocessing selesai. File disimpan di:", f"{OUTPUT_DIR}/data_preprocessed.csv")
+print("✅ Preprocessing selesai. File disimpan di:", output_path)
 print("📊 Jumlah baris setelah preprocessing:", df_encoded.shape[0])
 print("📊 Jumlah kolom setelah preprocessing:", df_encoded.shape[1])
 print(df_encoded.head())
