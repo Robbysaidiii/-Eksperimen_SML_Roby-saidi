@@ -2,90 +2,90 @@ import pandas as pd
 import numpy as np
 import re
 import os
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import StandardScaler
+from scipy.stats import zscore
+from sklearn.model_selection import train_test_split
 
 # --- 1. Load Data ---
-RAW_PATH = "namadataset_raw/jobs_dataset.csv"
+RAW_PATH = "../namadataset_raw/jobs_dataset.csv"
 df = pd.read_csv(RAW_PATH)
 
 # --- 2. Preprocessing Salary ---
 def extract_salary(s):
-    """Ambil angka pertama dari kolom salary"""
     try:
         numbers = re.findall(r'[\d,]+', str(s))
-        if numbers:
+        if len(numbers) >= 1:
             return int(numbers[0].replace(',', ''))
-    except Exception:
+    except:
         return None
     return None
 
 df['salary_num'] = df['salary'].apply(extract_salary)
-
-# --- 3. Feature Engineering ---
 df['desc_len'] = df['description'].astype(str).apply(len)
 df['posname_len'] = df['positionName'].astype(str).apply(len)
 
+# --- 3. Missing Values ---
+df = df.dropna(subset=['salary'])
+job_cols = ['jobType/0', 'jobType/1', 'jobType/2', 'jobType/3']
+df[job_cols] = df[job_cols].fillna(False)
+df['externalApplyLink'] = df['externalApplyLink'].fillna('Unavailable')
+
 # --- 4. Drop Duplicates ---
-df = df.drop_duplicates()
+df = df.drop_duplicates(subset=['company', 'positionName', 'location', 'salary', 'description'])
 
-# --- 5. Winsorizing (IQR = 1.0) ---
-num_cols = ['salary_num', 'desc_len', 'posname_len']
-for col in num_cols:
-    # Isi NaN dengan median sebelum winsorizing
-    if df[col].isnull().any():
-        df[col] = df[col].fillna(df[col].median())
-    Q1 = df[col].quantile(0.25)
-    Q3 = df[col].quantile(0.75)
+# --- 5. Binning Salary dan Rating ---
+bins_salary = [0, 70000, 120000, 200000, df['salary_num'].max()]
+labels_salary = ['Low', 'Medium', 'High', 'Very High']
+df['salary_bin'] = pd.cut(df['salary_num'], bins=bins_salary, labels=labels_salary)
+
+bins_rating = [0, 2, 3.5, 4.5, 5]
+labels_rating = ['Poor', 'Average', 'Good', 'Excellent']
+df['rating_bin'] = pd.cut(df['rating'], bins=bins_rating, labels=labels_rating)
+
+df = df[df['rating_bin'].isin(['Good', 'Excellent'])].copy()
+df = df.dropna(subset=['salary_bin'])
+
+# --- 6. Split ---
+y = df['salary_bin']
+X = df.drop(columns=['salary_bin'])
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, stratify=y, random_state=42
+)
+
+# --- 7. Scaling ---
+cols_to_scale = ['rating', 'salary_num', 'desc_len', 'posname_len']
+scaler = StandardScaler()
+X_train[cols_to_scale] = scaler.fit_transform(X_train[cols_to_scale])
+X_test[cols_to_scale] = scaler.transform(X_test[cols_to_scale])
+
+# --- 8. Outlier Handling (IQR clipping) ---
+for col in cols_to_scale:
+    Q1 = X_train[col].quantile(0.25)
+    Q3 = X_train[col].quantile(0.75)
     IQR = Q3 - Q1
-    lower = Q1 - 1.0 * IQR
-    upper = Q3 + 1.0 * IQR
-    df[col] = df[col].clip(lower, upper)
+    lower = Q1 - 1.5 * IQR
+    upper = Q3 + 1.5 * IQR
+    X_train[col] = X_train[col].clip(lower, upper)
 
-# --- 6. One-Hot Encoding ---
-categorical_cols = df.select_dtypes(include=['object', 'bool']).columns.tolist()
-df[categorical_cols] = df[categorical_cols].fillna("Missing")
+# --- 9. Encoding ---
+cols_to_encode = [
+    'company', 'location', 'positionName',
+    'jobType/0', 'jobType/1', 'jobType/2', 'jobType/3',
+    'searchInput/country', 'searchInput/position'
+]
+X_train = pd.get_dummies(X_train, columns=cols_to_encode, drop_first=True)
+X_test = pd.get_dummies(X_test, columns=cols_to_encode, drop_first=True)
+X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
 
-ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-encoded_array = ohe.fit_transform(df[categorical_cols])
-encoded_df = pd.DataFrame(encoded_array, columns=ohe.get_feature_names_out(categorical_cols), index=df.index)
+# --- 10. Simpan Output ---
+Xy_train = X_train.copy()
+Xy_train['salary_bin'] = y_train
 
-# Gabungkan kembali numerik + encoded kategorik
-df_encoded = pd.concat([df.drop(columns=categorical_cols), encoded_df], axis=1)
+os.makedirs("namadataset_preprocessing", exist_ok=True)
+output_path = "namadataset_preprocessing/data_preprocessed.csv"
+Xy_train.to_csv(output_path, index=False)
 
-# --- 7. Binning Rating ---
-if 'rating' in df_encoded.columns and df_encoded['rating'].notna().all():
-    try:
-        df_encoded['rating_bin'] = pd.cut(df_encoded['rating'], bins=3, labels=["Low", "Medium", "High"])
-    except Exception as e:
-        print(f"⚠️ Gagal binning rating: {e}")
-
-# --- 8. Binning Salary (target klasifikasi) ---
-if df['salary_num'].notna().any():
-    try:
-        max_salary = df['salary_num'].max()
-        if not np.isnan(max_salary) and max_salary > 200000:
-            bins_salary = [0, 70000, 120000, 200000, max_salary + 1]
-            labels_salary = ['Low', 'Medium', 'High', 'Very High']
-            df_encoded['salary_bin'] = pd.cut(df['salary_num'], bins=bins_salary, labels=labels_salary)
-        elif df['salary_num'].nunique() >= 4:
-            # fallback ke qcut kalau max_salary terlalu kecil
-            df_encoded['salary_bin'] = pd.qcut(df['salary_num'], q=4, labels=['Low', 'Medium', 'High', 'Very High'])
-            print("⚠️ Menggunakan qcut karena salary_num max terlalu kecil untuk bin tetap.")
-        else:
-            print("⚠️ Tidak cukup variasi pada salary_num untuk melakukan binning.")
-    except Exception as e:
-        print(f"❌ Gagal binning salary: {e}")
-else:
-    print("❌ Tidak ada nilai salary_num yang valid. Binning salary dibatalkan.")
-
-# --- 9. Simpan Output ---
-OUTPUT_DIR = "namadataset_preprocessing"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-output_path = os.path.join(OUTPUT_DIR, "data_preprocessed.csv")
-df_encoded.to_csv(output_path, index=False)
-
-# --- Done ---
-print("✅ Preprocessing selesai. File disimpan di:", output_path)
-print("📊 Jumlah baris:", df_encoded.shape[0])
-print("📊 Jumlah kolom:", df_encoded.shape[1])
-print(df_encoded.head())
+print("✅ File disimpan di:", output_path)
+print("📊 Jumlah baris:", Xy_train.shape[0])
+print("📊 Jumlah kolom:", Xy_train.shape[1])
